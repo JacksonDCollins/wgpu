@@ -1,0 +1,5 @@
+{
+  "editor.formatOnType": true,
+  "cSpell.enabled": false
+  // "rust-analyzer.cargo.target": "wasm32-unknown-unknown"
+}
