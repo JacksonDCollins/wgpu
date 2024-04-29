@@ -3,7 +3,7 @@ pub mod texture;
 pub mod types;
 use cgmath::Zero;
 
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 
 use cgmath::Rotation3;
 use wgpu::util::DeviceExt;
@@ -14,12 +14,10 @@ use crate::{
     input, GameError,
 };
 
-use nalgebra_glm as glm;
-
-use self::types::{Instance, VertexDescription};
+use self::types::{Instance, InstanceRaw, RawInstanceVector, VertexDescription};
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
-const INSTANCE_DISPLACEMENT: glm::Vec3 = glm::Vec3::new(
+const INSTANCE_DISPLACEMENT: glam::Vec3 = glam::Vec3::new(
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
     0.0,
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
@@ -37,6 +35,7 @@ pub struct Render<'a> {
     index_buffer: wgpu::Buffer,
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
+    depth_texture: texture::Texture,
     camera: camera::Camera,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -214,13 +213,16 @@ impl Render<'_> {
         let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
                 (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = glm::Vec3::new(x as f32, 0.0, z as f32) - INSTANCE_DISPLACEMENT;
-                    let rotation = if position.is_zero() {
+                    let position = glam::Vec3::new(x as f32, 0.0, z as f32) - INSTANCE_DISPLACEMENT;
+                    let rotation = if position.length() == 0.0 {
                         // this is needed so an object at (0, 0, 0) won't get scaled to zero
                         // as Quaternions can affect scale if they're not created correctly
-                        glm::quat_angle_axis(cgmath::Deg(0.0).0, &glm::Vec3::z())
+                        glam::Quat::from_axis_angle(glam::Vec3::Z, 0.0)
                     } else {
-                        glm::quat_angle_axis(cgmath::Deg(45.0).0, &position.normalize())
+                        glam::Quat::from_axis_angle(
+                            position.normalize(),
+                            radians::Deg::new(45.0).wrap().val(),
+                        )
                     };
 
                     types::Instance::new(position, rotation)
@@ -228,12 +230,14 @@ impl Render<'_> {
             })
             .collect::<Vec<_>>();
 
-        let instance_data = instances.iter().map(Instance::get_data).collect::<Vec<_>>();
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
+            contents: bytemuck::cast_slice(&instances.to_raw()),
             usage: wgpu::BufferUsages::VERTEX,
         });
+
+        let depth_texture =
+            texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
@@ -269,7 +273,13 @@ impl Render<'_> {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -289,6 +299,7 @@ impl Render<'_> {
             index_buffer,
             diffuse_bind_group,
             diffuse_texture,
+            depth_texture,
             camera,
             camera_buffer,
             camera_bind_group,
@@ -302,6 +313,12 @@ impl Render<'_> {
         self.config.width = size.width;
         self.config.height = size.height;
         self.surface.configure(&self.device, &self.config);
+
+        self.camera
+            .set_aspect(self.config.width as f32 / self.config.height as f32);
+
+        self.depth_texture =
+            texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
     }
 
     pub fn update(&mut self, input: &input::Input, delta: f64) {
@@ -345,7 +362,14 @@ impl Render<'_> {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });

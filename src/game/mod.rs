@@ -5,7 +5,7 @@ use std::{borrow::Borrow, sync::Arc, thread::sleep};
 use derivative::Derivative;
 use game_loop::{GameLoop, TimeTrait};
 use gilrs::Gilrs;
-use nalgebra_glm::RealNumber;
+
 use strum::IntoEnumIterator;
 use winit::{
     event::{Event, KeyEvent, WindowEvent},
