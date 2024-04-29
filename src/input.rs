@@ -7,14 +7,21 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use strum::EnumIter;
 use winit::event::{DeviceEvent, Event, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use crate::lock;
 
-//
-// Input
-//
+#[derive(Debug)]
+pub enum InputEnum {
+    GamepadAxis(GamepadAxis),
+    GamepadButton(GamepadButton),
+    KeyboardButton(KeyboardButton),
+    MouseButton(MouseButton),
+    MouseAxis(MouseAxis),
+}
 
+pub trait Listener: std::fmt::Debug {
+    fn hear(&self, input: InputEnum, event: InputState);
+}
 #[derive(Debug)]
 pub struct Input {
     inner: Arc<Inner>,
@@ -26,11 +33,20 @@ impl Input {
             inner: Arc::new(Inner {
                 guard: Mutex::new(InnerMut {
                     inputs: HashMap::new(),
+                    listeners: HashMap::new(),
                     gilrs: GilrsBuilder::new().set_update_state(false).build().unwrap(), // PANIC
                 }),
                 updated: AtomicBool::new(false),
             }),
         }
+    }
+
+    pub fn register_listener<A: 'static>(&self, listener: Arc<dyn Listener>) {
+        lock!(self.inner.guard)
+            .listeners
+            .entry(TypeId::of::<A>())
+            .or_insert_with(|| Vec::new())
+            .push(listener);
     }
 
     pub fn get_f32<I: InputMarker>(&self, input: I) -> InputState {
@@ -61,6 +77,8 @@ impl Input {
             .downcast_mut::<HashMap<I, InputState>>()
             .unwrap() // PANIC should never happen
             .insert(input, state);
+
+        Self::yell_listeners(lock, input, state);
     }
 
     fn set_inputs<I: InputMarker, It: IntoIterator<Item = (I, InputState)>>(
@@ -157,6 +175,18 @@ impl Input {
         }
     }
 
+    fn yell_listeners<I: InputMarker>(
+        lock: &mut MutexGuard<InnerMut>,
+        input: I,
+        state: InputState,
+    ) {
+        lock.listeners
+            .get(&TypeId::of::<I>())
+            .unwrap_or(&Vec::new())
+            .iter()
+            .for_each(|listener| listener.hear(input.into(), state));
+    }
+
     pub fn reset(&mut self) -> () {
         self.inner.updated.store(false, Ordering::Relaxed);
         let mut lock = lock!(self.inner.guard);
@@ -202,6 +232,7 @@ struct Inner {
 struct InnerMut {
     /// `Any = HashMap<I: InputMarker, InputState>`
     inputs: HashMap<TypeId, Box<dyn Any + Send + Sync + 'static>>,
+    listeners: HashMap<TypeId, Vec<Arc<dyn Listener>>>,
     gilrs: Gilrs,
 }
 
@@ -209,7 +240,9 @@ struct InnerMut {
 // InputMarker
 //
 
-pub trait InputMarker: Clone + Copy + PartialEq + Eq + Hash + Send + Sync + 'static {}
+pub trait InputMarker: Clone + Copy + PartialEq + Eq + Hash + Send + Sync + 'static {
+    fn into(self) -> InputEnum;
+}
 
 //
 // InputState
@@ -233,7 +266,11 @@ pub enum MouseAxis {
     WheelDeltaY,
 }
 
-impl InputMarker for MouseAxis {}
+impl InputMarker for MouseAxis {
+    fn into(self) -> InputEnum {
+        InputEnum::MouseAxis(self)
+    }
+}
 
 //
 // GamepadAxis
@@ -268,7 +305,11 @@ impl GamepadAxis {
     }
 }
 
-impl InputMarker for GamepadAxis {}
+impl InputMarker for GamepadAxis {
+    fn into(self) -> InputEnum {
+        InputEnum::GamepadAxis(self)
+    }
+}
 
 //
 // MouseButton
@@ -297,7 +338,11 @@ impl MouseButton {
     }
 }
 
-impl InputMarker for MouseButton {}
+impl InputMarker for MouseButton {
+    fn into(self) -> InputEnum {
+        InputEnum::MouseButton(self)
+    }
+}
 
 //
 // GamepadButton
@@ -354,7 +399,11 @@ impl GamepadButton {
     }
 }
 
-impl InputMarker for GamepadButton {}
+impl InputMarker for GamepadButton {
+    fn into(self) -> InputEnum {
+        InputEnum::GamepadButton(self)
+    }
+}
 
 //
 // KeyboardButton
@@ -760,7 +809,11 @@ impl KeyboardButton {
     }
 }
 
-impl InputMarker for KeyboardButton {}
+impl InputMarker for KeyboardButton {
+    fn into(self) -> InputEnum {
+        InputEnum::KeyboardButton(self)
+    }
+}
 
 mod macros {
     #[macro_export]
@@ -769,6 +822,4 @@ mod macros {
             $guard.lock().unwrap()
         };
     }
-
-    pub(crate) use lock;
 }

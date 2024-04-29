@@ -1,7 +1,11 @@
-use std::{borrow::Borrow, sync::Arc};
+pub mod camera_controller;
+
+use std::{borrow::Borrow, sync::Arc, thread::sleep};
 
 use derivative::Derivative;
+use game_loop::{GameLoop, TimeTrait};
 use gilrs::Gilrs;
+use nalgebra_glm::RealNumber;
 use strum::IntoEnumIterator;
 use winit::{
     event::{Event, KeyEvent, WindowEvent},
@@ -20,17 +24,16 @@ pub struct Game<'a> {
 
 impl<'a> Game<'a> {
     pub async fn new(window: Arc<Window>) -> Result<Self, GameError> {
+        let input = input::Input::new();
         Ok(Self {
             score: 0,
-            input: input::Input::new(),
-            render: render::Render::new(window).await?,
+            input,
+            render: render::Render::new(window.clone()).await?,
         })
     }
 
-    pub fn update(&mut self) {
-        if self.input.get_bool(input::KeyboardButton::Space) {
-            self.score += 1;
-        }
+    pub fn update(&mut self, delta: f64) {
+        self.render.update(&self.input, delta);
     }
 
     pub fn draw(&mut self, window: &Arc<Window>) -> Result<(), GameError> {

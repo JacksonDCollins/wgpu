@@ -71,7 +71,7 @@ pub async fn run() -> Result<()> {
         240,
         0.1,
         |g| {
-            g.game.update();
+            g.game.update(g.last_frame_time());
         },
         |g| match g.game.draw(&g.window) {
             Ok(_) => (),
